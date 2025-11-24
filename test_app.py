@@ -1,96 +1,194 @@
 import pytest
-from app import app, db
-from datetime import datetime
+import uuid
+from app import app 
+
+# fixtures
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    with app.test_client() as client:
-        yield client
+def app_fixture():
+    app.config.update({
+        "TESTING": True  # enable testing mode
+    })
+    return app
 
-# =========================================================
-# USER TESTS
-# =========================================================
+@pytest.fixture
+def client(app_fixture):
+    return app_fixture.test_client()
 
-def test_add_user(client):
-    response = client.post('/users', json={
-        "username": "test_user_unique",
+
+# user endpoint tests
+
+def test_create_user(client):
+    username = f"user_{uuid.uuid4().hex[:6]}"
+    resp = client.post('/users', json={
+        "username": username,
         "password": "password123",
         "role": "teacher"
     })
-    assert response.status_code == 201
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert "user_id" in data
 
 def test_get_user(client):
-    response = client.get('/users/1')  # Adjust ID if needed
-    assert response.status_code == 200
+    username = f"user_{uuid.uuid4().hex[:6]}"
+    create_resp = client.post('/users', json={
+        "username": username,
+        "password": "password123",
+        "role": "teacher"
+    })
+    user_id = create_resp.get_json()['user_id']
+
+    get_resp = client.get(f'/users/{user_id}')
+    assert get_resp.status_code == 200
+    data = get_resp.get_json()
+    assert data['username'] == username
 
 def test_update_user(client):
-    response = client.put('/users/1', json={
-        "username": "updated_user"
+    username = f"user_{uuid.uuid4().hex[:6]}"
+    create_resp = client.post('/users', json={
+        "username": username,
+        "password": "password123",
+        "role": "teacher"
     })
-    assert response.status_code == 200
+    user_id = create_resp.get_json()['user_id']
 
-# =========================================================
-# STUDENT TESTS
-# =========================================================
+    new_username = f"updated_{uuid.uuid4().hex[:6]}"
+    update_resp = client.put(f'/users/{user_id}', json={"username": new_username})
+    assert update_resp.status_code == 200
 
-def test_add_student(client):
-    response = client.post('/students', json={
-        "name": "Test Student",
-        "rfid_tag": "RFID999_UNIQUE",
-        "photo_path": "/photos/test.jpg"
+    get_resp = client.get(f'/users/{user_id}')
+    data = get_resp.get_json()
+    assert data['username'] == new_username
+
+def test_delete_user(client):
+    username = f"user_{uuid.uuid4().hex[:6]}"
+    create_resp = client.post('/users', json={
+        "username": username,
+        "password": "password123",
+        "role": "teacher"
     })
-    assert response.status_code == 201
+    user_id = create_resp.get_json()['user_id']
+
+    delete_resp = client.delete(f'/users/{user_id}')
+    assert delete_resp.status_code == 200
+
+    get_resp = client.get(f'/users/{user_id}')
+    assert get_resp.status_code == 404
+
+
+# student enpoint tests
+
+def test_create_student(client):
+    name = f"Student_{uuid.uuid4().hex[:6]}"
+    resp = client.post('/students', json={"name": name})
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert "student_id" in data
+    assert "rfid_tag" in data
 
 def test_get_student(client):
-    response = client.get('/students/1')  # Adjust ID if needed
-    assert response.status_code == 200
+    name = f"Student_{uuid.uuid4().hex[:6]}"
+    student_resp = client.post('/students', json={"name": name})
+    student_id = student_resp.get_json()['student_id']
+
+    get_resp = client.get(f'/students/{student_id}')
+    assert get_resp.status_code == 200
+    data = get_resp.get_json()
+    assert data['name'] == name
 
 def test_update_student(client):
-    response = client.put('/students/1', json={
-        "name": "Updated Student"
-    })
-    assert response.status_code == 200
+    student_resp = client.post('/students', json={"name": "Original"})
+    student_id = student_resp.get_json()['student_id']
 
-# =========================================================
-# CLASS TESTS
-# =========================================================
+    new_name = "UpdatedName"
+    update_resp = client.put(f'/students/{student_id}', json={"name": new_name})
+    assert update_resp.status_code == 200
 
-def test_add_class(client):
-    response = client.post('/classes', json={
-        "class_name": "Test Class",
-        "teacher_id": 1,
-        "schedule": "Mon 9AM"
-    })
-    assert response.status_code == 201
+    get_resp = client.get(f'/students/{student_id}')
+    data = get_resp.get_json()
+    assert data['name'] == new_name
+
+
+# Class endpoint tests
+
+def test_create_class(client):
+    username = f"user_{uuid.uuid4().hex[:6]}"
+    user_resp = client.post('/users', json={"username": username, "password": "pass", "role": "teacher"})
+    teacher_id = user_resp.get_json()['user_id']
+
+    class_name = f"Class_{uuid.uuid4().hex[:6]}"
+    resp = client.post('/classes', json={"class_name": class_name, "teacher_id": teacher_id})
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert "class_id" in data
 
 def test_get_class(client):
-    response = client.get('/classes/1')  # Adjust ID if needed
-    assert response.status_code == 200
+    user_resp = client.post('/users', json={"username": f"user_{uuid.uuid4().hex[:6]}", "password": "pass", "role": "teacher"})
+    teacher_id = user_resp.get_json()['user_id']
 
-def test_update_class(client):
-    response = client.put('/classes/1', json={
-        "class_name": "Updated Class"
-    })
-    assert response.status_code == 200
+    class_resp = client.post('/classes', json={"class_name": "Math", "teacher_id": teacher_id})
+    class_id = class_resp.get_json()['class_id']
 
-# =========================================================
-# ATTENDANCE TESTS
-# =========================================================
+    get_resp = client.get(f'/classes/{class_id}')
+    assert get_resp.status_code == 200
+    data = get_resp.get_json()
+    assert data['class_name'] == "Math"
+
+
+# attendance endpoint tests
 
 def test_log_attendance(client):
-    response = client.post('/attendance', json={
-        "student_id": 1,
-        "class_id": 1,
-        "method": "RFID",
-        "timestamp": datetime.utcnow().isoformat()
-    })
-    assert response.status_code == 201
+    student_resp = client.post('/students', json={"name": "Student_Att"})
+    student_id = student_resp.get_json()['student_id']
 
-def test_get_attendance(client):
-    response = client.get('/attendance', query_string={
-        "class_id": 1,
-        "date": datetime.utcnow().strftime("%Y-%m-%d")
-    })
-    assert response.status_code == 200
+    user_resp = client.post('/users', json={"username": f"user_{uuid.uuid4().hex[:6]}", "password": "pass", "role": "teacher"})
+    teacher_id = user_resp.get_json()['user_id']
+    class_resp = client.post('/classes', json={"class_name": "History", "teacher_id": teacher_id})
+    class_id = class_resp.get_json()['class_id']
 
+    resp = client.post('/attendance', json={"student_id": student_id, "class_id": class_id, "method": "manual"})
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data['message'] == "Attendance recorded"
+
+
+# RFID & face tests
+
+def test_rfid_scan_success(client):
+    student_resp = client.post('/students', json={"name": f"Student_{uuid.uuid4().hex[:6]}"})
+    student_data = student_resp.get_json()
+    rfid_tag = student_data['rfid_tag']
+    student_id = student_data['student_id']
+
+    resp = client.post('/rfid/scan', json={"rfid_tag": rfid_tag})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['student_id'] == student_id
+    assert data['status'] == "Verified"
+
+def test_rfid_scan_failure(client):
+    resp = client.post('/rfid/scan', json={"rfid_tag": "INVALID123"})
+    assert resp.status_code == 404
+    data = resp.get_json()
+    assert "error" in data
+
+def test_face_verify_success(client):
+    student_resp = client.post('/students', json={"name": f"Student_{uuid.uuid4().hex[:6]}"})
+    student_id = student_resp.get_json()['student_id']
+
+    resp = client.post('/face/verify', json={"student_id": student_id, "photo_data": "dummy_photo_data"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['student_id'] == student_id
+    assert data['status'] == "Verified"
+
+def test_face_verify_failure_missing_fields(client):
+    resp = client.post('/face/verify', json={"photo_data": "dummy_photo_data"})
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "error" in data
+
+    resp = client.post('/face/verify', json={"student_id": 1})
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "error" in data
