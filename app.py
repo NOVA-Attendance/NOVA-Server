@@ -2,19 +2,21 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
+import random
+import string
 
 app = Flask(__name__)
 
 # Database Setup
+
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:group9@localhost/attendance_system'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# =========================================================
-# USER ENDPOINTS
-# =========================================================
+# User Endpoints
 
 @app.route('/users', methods=['POST'])
 def create_user():
@@ -29,16 +31,20 @@ def create_user():
     hashed_password = generate_password_hash(password)
 
     try:
-        db.session.execute(text("""
+        result = db.session.execute(text("""
             INSERT INTO users (username, password_hash, role)
             VALUES (:username, :password_hash, :role)
+            RETURNING user_id
         """), {'username': username, 'password_hash': hashed_password, 'role': role})
+        user_id = result.fetchone()[0]
         db.session.commit()
-        return jsonify({'message': 'User created successfully'}), 201
+        return jsonify({'message': 'User created successfully', 'user_id': user_id}), 201
+    except IntegrityError as e:
+        db.session.rollback()
+        return jsonify({'error': 'Username already exists'}), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/users/<int:user_id>', methods=['GET'])
 def get_user(user_id):
@@ -54,7 +60,6 @@ def get_user(user_id):
             return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/users/<int:user_id>', methods=['PUT'])
 def update_user(user_id):
@@ -79,42 +84,69 @@ def update_user(user_id):
     if not updates:
         return jsonify({'error': 'No fields to update'}), 400
 
-    query = f"UPDATE users SET {', '.join(updates)} WHERE user_id = :user_id"
+    query = f"UPDATE users SET {', '.join(updates)} WHERE user_id = :user_id RETURNING user_id"
 
     try:
-        db.session.execute(text(query), params)
+        result = db.session.execute(text(query), params).fetchone()
+        if not result:
+            db.session.rollback()
+            return jsonify({'error': 'User not found'}), 404
         db.session.commit()
         return jsonify({'message': 'User updated successfully'}), 200
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'error': 'Username already exists'}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/users/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    try:
+        result = db.session.execute(text("""
+            DELETE FROM users WHERE user_id = :user_id RETURNING user_id
+        """), {'user_id': user_id}).fetchone()
+        if result:
+            db.session.commit()
+            return jsonify({'message': f'User {user_id} deleted successfully'}), 200
+        else:
+            return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 
-# =========================================================
-# STUDENT ENDPOINTS
-# =========================================================
+# student endpoints
+
+
+def generate_random_rfid(length=8):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 @app.route('/students', methods=['POST'])
 def create_student():
     data = request.get_json()
     name = data.get('name')
-    rfid_tag = data.get('rfid_tag')
+    rfid_tag = data.get('rfid_tag') or generate_random_rfid()
     photo_path = data.get('photo_path')
 
-    if not name or not rfid_tag:
+    if not name:
         return jsonify({'error': 'Missing required fields'}), 400
 
     try:
-        db.session.execute(text("""
+        result = db.session.execute(text("""
             INSERT INTO students (name, rfid_tag, photo_path)
             VALUES (:name, :rfid_tag, :photo_path)
+            RETURNING student_id
         """), {'name': name, 'rfid_tag': rfid_tag, 'photo_path': photo_path})
+        student_id = result.fetchone()[0]
         db.session.commit()
-        return jsonify({'message': 'Student created successfully'}), 201
+        return jsonify({'message': 'Student created successfully', 'student_id': student_id, 'rfid_tag': rfid_tag}), 201
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'error': 'RFID tag already exists'}), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/students/<int:student_id>', methods=['GET'])
 def get_student(student_id):
@@ -130,7 +162,6 @@ def get_student(student_id):
             return jsonify({'error': 'Student not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/students/<int:student_id>', methods=['PUT'])
 def update_student(student_id):
@@ -155,20 +186,24 @@ def update_student(student_id):
     if not updates:
         return jsonify({'error': 'No fields to update'}), 400
 
-    query = f"UPDATE students SET {', '.join(updates)} WHERE student_id = :student_id"
+    query = f"UPDATE students SET {', '.join(updates)} WHERE student_id = :student_id RETURNING student_id"
 
     try:
-        db.session.execute(text(query), params)
+        result = db.session.execute(text(query), params).fetchone()
+        if not result:
+            db.session.rollback()
+            return jsonify({'error': 'Student not found'}), 404
         db.session.commit()
         return jsonify({'message': 'Student updated successfully'}), 200
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'error': 'RFID tag already exists'}), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+# class endpoints
 
-# =========================================================
-# CLASS ENDPOINTS
-# =========================================================
 
 @app.route('/classes', methods=['POST'])
 def create_class():
@@ -181,20 +216,17 @@ def create_class():
         return jsonify({'error': 'Missing required fields'}), 400
 
     try:
-        db.session.execute(text("""
+        result = db.session.execute(text("""
             INSERT INTO classes (class_name, teacher_id, schedule)
             VALUES (:class_name, :teacher_id, :schedule)
-        """), {
-            'class_name': class_name,
-            'teacher_id': teacher_id,
-            'schedule': schedule
-        })
+            RETURNING class_id
+        """), {'class_name': class_name, 'teacher_id': teacher_id, 'schedule': schedule})
+        class_id = result.fetchone()[0]
         db.session.commit()
-        return jsonify({'message': 'Class created successfully'}), 201
+        return jsonify({'message': 'Class created successfully', 'class_id': class_id}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/classes/<int:class_id>', methods=['GET'])
 def get_class(class_id):
@@ -210,7 +242,6 @@ def get_class(class_id):
             return jsonify({'error': 'Class not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/classes/<int:class_id>', methods=['PUT'])
 def update_class(class_id):
@@ -235,16 +266,18 @@ def update_class(class_id):
     if not updates:
         return jsonify({'error': 'No fields to update'}), 400
 
-    query = f"UPDATE classes SET {', '.join(updates)} WHERE class_id = :class_id"
+    query = f"UPDATE classes SET {', '.join(updates)} WHERE class_id = :class_id RETURNING class_id"
 
     try:
-        db.session.execute(text(query), params)
+        result = db.session.execute(text(query), params).fetchone()
+        if not result:
+            db.session.rollback()
+            return jsonify({'error': 'Class not found'}), 404
         db.session.commit()
         return jsonify({'message': 'Class updated successfully'}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/classes/<int:class_id>/roster', methods=['GET'])
 def get_class_roster(class_id):
@@ -262,9 +295,8 @@ def get_class_roster(class_id):
         return jsonify({'error': str(e)}), 500
 
 
-# =========================================================
-# ATTENDANCE ENDPOINTS
-# =========================================================
+# attendance endpoints
+
 
 @app.route('/attendance', methods=['POST'])
 def log_attendance():
@@ -280,17 +312,12 @@ def log_attendance():
         db.session.execute(text("""
             INSERT INTO attendance_logs (student_id, class_id, method, status)
             VALUES (:student_id, :class_id, :method, 'Present')
-        """), {
-            'student_id': student_id,
-            'class_id': class_id,
-            'method': method
-        })
+        """), {'student_id': student_id, 'class_id': class_id, 'method': method})
         db.session.commit()
         return jsonify({'message': 'Attendance recorded'}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/attendance', methods=['GET'])
 def get_attendance():
@@ -315,9 +342,8 @@ def get_attendance():
         return jsonify({'error': str(e)}), 500
 
 
-# =========================================================
-# RFID & FACE
-# =========================================================
+# RFID & FACE endpoints
+
 
 @app.route('/rfid/scan', methods=['POST'])
 def rfid_scan():
@@ -342,7 +368,6 @@ def rfid_scan():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/face/verify', methods=['POST'])
 def face_verify():
     data = request.get_json()
@@ -352,14 +377,14 @@ def face_verify():
     if not student_id or not photo_data:
         return jsonify({'error': 'Missing fields'}), 400
 
+    # Here you would integrate a real face recognition model
     return jsonify({
         'student_id': student_id,
         'status': 'Verified'
     }), 200
 
 
-# =========================================================
-# MAIN ENTRY POINT
-# =========================================================
+# Main entry point
+
 if __name__ == '__main__':
     app.run(debug=True)
