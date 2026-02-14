@@ -935,6 +935,105 @@ def face_verify():
     }), 200
 
 
+# Comments endpoints
+
+@app.route('/comments', methods=['POST'])
+def create_comment():
+    """Create a comment for a photo/attendance log"""
+    data = request.get_json()
+    photo_id = data.get('photoId')  # This is actually log_id from attendance_logs
+    comment_text = data.get('comment')
+
+    if not photo_id or not comment_text or not comment_text.strip():
+        return jsonify({'error': 'Missing photoId or comment'}), 400
+
+    try:
+        # Verify the log exists and get student_id
+        log_result = db.session.execute(text("""
+            SELECT student_id FROM attendance_logs WHERE log_id = :log_id
+        """), {'log_id': photo_id}).fetchone()
+
+        if not log_result:
+            return jsonify({'error': 'Attendance log not found'}), 404
+
+        student_id = log_result[0]
+
+        # Insert comment
+        db.session.execute(text("""
+            INSERT INTO comments (log_id, student_id, comment_text)
+            VALUES (:log_id, :student_id, :comment_text)
+        """), {
+            'log_id': photo_id,
+            'student_id': student_id,
+            'comment_text': comment_text.strip()
+        })
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Comment saved successfully',
+            'log_id': photo_id,
+            'student_id': student_id
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/comments', methods=['GET'])
+def get_comments():
+    """Get all comments, optionally filtered by log_id or student_id"""
+    log_id = request.args.get('log_id', type=int)
+    student_id = request.args.get('student_id', type=int)
+
+    try:
+        if log_id:
+            # Get comments for a specific log
+            results = db.session.execute(text("""
+                SELECT comment_id, log_id, student_id, comment_text, created_at
+                FROM comments
+                WHERE log_id = :log_id
+                ORDER BY created_at DESC
+            """), {'log_id': log_id}).fetchall()
+        elif student_id:
+            # Get comments for a specific student
+            results = db.session.execute(text("""
+                SELECT comment_id, log_id, student_id, comment_text, created_at
+                FROM comments
+                WHERE student_id = :student_id
+                ORDER BY created_at DESC
+            """), {'student_id': student_id}).fetchall()
+        else:
+            # Get all comments
+            results = db.session.execute(text("""
+                SELECT comment_id, log_id, student_id, comment_text, created_at
+                FROM comments
+                ORDER BY created_at DESC
+            """)).fetchall()
+
+        comments = [dict(row._mapping) for row in results]
+        return jsonify(comments), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/comments/<int:log_id>', methods=['GET'])
+def get_comments_by_log(log_id):
+    """Get comments for a specific attendance log"""
+    try:
+        results = db.session.execute(text("""
+            SELECT comment_id, log_id, student_id, comment_text, created_at
+            FROM comments
+            WHERE log_id = :log_id
+            ORDER BY created_at DESC
+        """), {'log_id': log_id}).fetchall()
+
+        comments = [dict(row._mapping) for row in results]
+        return jsonify(comments), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health_check():
