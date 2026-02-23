@@ -25,8 +25,7 @@ app = Flask(__name__)
 # Enable CORS for all routes - allow all origins in development
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Database Setup
-# Default: PostgreSQL. Override with DATABASE_URI in .env if needed (e.g. sqlite for local dev without Postgres).
+# Database Setup (PostgreSQL by default; set DATABASE_URI in .env to use SQLite if needed)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
     'DATABASE_URI',
     'postgresql://postgres:group9@localhost/attendance_system'
