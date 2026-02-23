@@ -26,9 +26,11 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Database Setup
-
-#app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:group9@localhost/attendance_system'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///nova.db'
+# Default: PostgreSQL. Override with DATABASE_URI in .env if needed (e.g. sqlite for local dev without Postgres).
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    'DATABASE_URI',
+    'postgresql://postgres:group9@localhost/attendance_system'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
