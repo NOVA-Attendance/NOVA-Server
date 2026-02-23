@@ -11,13 +11,13 @@ def create_env_file():
     env_file = '.env'
     
     print("=" * 60)
-    print("📧 NOVA Email Setup for 2-Step Verification")
+    print("NOVA Email Setup for 2-Step Verification")
     print("=" * 60)
     print()
     
     # Check if .env already exists
     if os.path.exists(env_file):
-        print(f"⚠️  {env_file} already exists.")
+        print(f"Note: {env_file} already exists.")
         response = input("Do you want to update it? (y/n): ").lower()
         if response != 'y':
             print("Cancelled.")
@@ -87,18 +87,18 @@ EMAIL_PASSWORD={email_password}
     
     print()
     print("=" * 60)
-    print("✅ .env file created successfully!")
+    print(".env file created successfully!")
     print("=" * 60)
     print()
     
     if email_enabled == 'true':
-        print("📧 Email is ENABLED")
+        print("Email is ENABLED")
         print("   Verification codes will be sent to user emails")
         print()
-        print("⚠️  IMPORTANT: Restart your backend server for changes to take effect!")
+        print("IMPORTANT: Restart your backend server for changes to take effect!")
         print("   Run: python3 app.py")
     else:
-        print("📧 Email is DISABLED")
+        print("Email is DISABLED")
         print("   Codes will be shown in console/response (dev mode)")
     print()
 
@@ -108,4 +108,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\n\nCancelled.")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")

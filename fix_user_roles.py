@@ -34,9 +34,9 @@ with app.app_context():
         db.session.execute(text("ALTER TABLE users_new RENAME TO users"))
         
         db.session.commit()
-        print("✅ Users table updated successfully - now supports 'prof' and 'ta' roles!")
+        print("Users table updated successfully - now supports 'prof' and 'ta' roles!")
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         print("Note: If table already updated, this is expected.")

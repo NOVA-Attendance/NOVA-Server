@@ -31,15 +31,15 @@ def test_registration():
         print(f"Response: {json.dumps(response.json(), indent=2)}")
         
         if response.status_code == 201:
-            print("\n✅ Registration successful!")
+            print("\nRegistration successful!")
         else:
-            print(f"\n❌ Registration failed: {response.json().get('error', 'Unknown error')}")
+            print(f"\nRegistration failed: {response.json().get('error', 'Unknown error')}")
             
     except requests.exceptions.ConnectionError:
-        print("\n❌ Cannot connect to server. Make sure the backend is running:")
+        print("\nCannot connect to server. Make sure the backend is running:")
         print("   python3 app.py")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
 
 if __name__ == "__main__":
     test_registration()

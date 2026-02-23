@@ -15,8 +15,8 @@ with app.test_client() as client:
     if response.status_code == 200:
         import json
         data = json.loads(response.get_data(as_text=True))
-        print(f"\n✅ Success! Found {len(data)} students")
+        print(f"\nSuccess! Found {len(data)} students")
         for student in data:
             print(f"  - {student.get('name')} (ID: {student.get('student_id')})")
     else:
-        print(f"\n❌ Error: Status {response.status_code}")
+        print(f"\nError: Status {response.status_code}")

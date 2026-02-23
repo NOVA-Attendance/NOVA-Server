@@ -10,10 +10,10 @@ with app.app_context():
         result = db.session.execute(text("SELECT student_id, name, rfid_tag, photo_path FROM students")).fetchall()
         students = [dict(row._mapping) for row in result]
         
-        print(f"✅ Database connection successful!")
-        print(f"✅ Found {len(students)} students in database:")
+        print(f"Database connection successful!")
+        print(f"Found {len(students)} students in database:")
         for student in students:
             print(f"   - {student['name']} (ID: {student['student_id']}, RFID: {student['rfid_tag']})")
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")

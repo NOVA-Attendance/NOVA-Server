@@ -12,7 +12,7 @@ with app.app_context():
             db.session.execute(text("""
                 ALTER TABLE users ADD COLUMN email VARCHAR(100)
             """))
-            print("✅ Added email column to users")
+            print("Added email column to users")
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 print(f"Note: email column may already exist: {e}")
@@ -21,7 +21,7 @@ with app.app_context():
             db.session.execute(text("""
                 ALTER TABLE users ADD COLUMN course_code VARCHAR(50)
             """))
-            print("✅ Added course_code column to users")
+            print("Added course_code column to users")
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 print(f"Note: course_code column may already exist: {e}")
@@ -38,7 +38,7 @@ with app.app_context():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
-            print("✅ Created verification_codes table")
+            print("Created verification_codes table")
         except Exception as e:
             print(f"Note: verification_codes table may already exist: {e}")
         
@@ -47,14 +47,14 @@ with app.app_context():
             db.session.execute(text("""
                 ALTER TABLE students ADD COLUMN student_number VARCHAR(50)
             """))
-            print("✅ Added student_number column to students")
+            print("Added student_number column to students")
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 print(f"Note: student_number column may already exist: {e}")
         
         db.session.commit()
-        print("✅ Database schema updated successfully!")
+        print("Database schema updated successfully!")
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Error updating schema: {e}")
+        print(f"Error updating schema: {e}")

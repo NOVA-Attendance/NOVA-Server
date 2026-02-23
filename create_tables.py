@@ -78,8 +78,8 @@ with app.app_context():
         """))
         
         db.session.commit()
-        print("✅ Success! All database tables created successfully.")
+        print("Success! All database tables created successfully.")
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Error creating tables: {e}")
+        print(f"Error creating tables: {e}")
