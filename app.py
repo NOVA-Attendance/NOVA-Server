@@ -9,9 +9,19 @@ import random
 import string
 import secrets
 import smtplib
+import json
+import base64
+import io
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+
+# Optional: for face embedding computation (pip install face_recognition)
+try:
+    import face_recognition
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    FACE_RECOGNITION_AVAILABLE = False
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -848,15 +858,16 @@ def get_student_attendance_stats():
 @app.route('/rfid/scan', methods=['POST'])
 def rfid_scan():
     """Scan RFID card - matches ID to student and automatically marks attendance"""
-    data = request.get_json()
-    rfid_id = data.get('rfid_id') or data.get('rfid_tag')  # Accept both field names
+    data = request.get_json() or {}
+    raw = data.get('rfid_id') or data.get('rfid_tag')  # Accept both field names
+    rfid_id = str(raw).strip() if raw is not None else None  # Normalize to string for DB match
     course_code = data.get('course_code')  # Optional - for filtering by course
 
     if not rfid_id:
         return jsonify({'error': 'Missing RFID ID'}), 400
 
     try:
-        # Find student by RFID ID
+        # Find student by RFID ID (stored as string in students.rfid_tag)
         result = db.session.execute(text("""
             SELECT student_id, name, student_number, rfid_tag, photo_path
             FROM students WHERE rfid_tag = :rfid_id
@@ -906,11 +917,23 @@ def rfid_scan():
         })
         db.session.commit()
 
+        # Include face_embedding if stored, so Jetson can verify face without a second request
+        face_embedding = None
+        try:
+            row = db.session.execute(text("""
+                SELECT face_embedding FROM students WHERE student_id = :sid
+            """), {'sid': result.student_id}).fetchone()
+            if row and getattr(row, 'face_embedding', None):
+                face_embedding = json.loads(row.face_embedding)
+        except Exception:
+            pass
+
         return jsonify({
             'student_id': result.student_id,
             'name': result.name,
             'student_number': result.student_number,
             'photo_path': result.photo_path,
+            'face_embedding': face_embedding,
             'status': 'Present',
             'message': 'Attendance marked successfully',
             'timestamp': datetime.now().isoformat()
@@ -919,6 +942,144 @@ def rfid_scan():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/rfid/face-embedding', methods=['GET'])
+def get_face_embedding_by_rfid():
+    """
+    Jetson calls this after a card tap to get the stored face embedding for that student.
+    Jetson then compares live camera face to this embedding to confirm identity.
+    """
+    rfid_id = request.args.get('rfid_id') or request.args.get('rfid_tag')
+    if not rfid_id:
+        return jsonify({'error': 'Missing rfid_id'}), 400
+    rfid_id = str(rfid_id).strip()
+
+    try:
+        try:
+            row = db.session.execute(text("""
+                SELECT student_id, name, face_embedding
+                FROM students WHERE rfid_tag = :rfid_id
+            """), {'rfid_id': rfid_id}).fetchone()
+        except Exception:
+            row = db.session.execute(text("""
+                SELECT student_id, name FROM students WHERE rfid_tag = :rfid_id
+            """), {'rfid_id': rfid_id}).fetchone()
+
+        if not row:
+            return jsonify({
+                'error': 'RFID card not recognized',
+                'rfid_id': rfid_id
+            }), 404
+
+        sid = row[0] if hasattr(row, '__getitem__') else row.student_id
+        name = row[1] if hasattr(row, '__getitem__') and len(row) > 1 else row.name
+        raw_emb = getattr(row, 'face_embedding', None) if not hasattr(row, '__getitem__') else (row[2] if len(row) > 2 else None)
+        face_embedding = None
+        if raw_emb:
+            try:
+                face_embedding = json.loads(raw_emb) if isinstance(raw_emb, str) else raw_emb
+            except Exception:
+                pass
+
+        return jsonify({
+            'student_id': sid,
+            'name': name,
+            'face_embedding': face_embedding
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _compute_face_embedding(image_bytes):
+    """Return 128-d embedding list or None. Requires face_recognition library."""
+    if not FACE_RECOGNITION_AVAILABLE:
+        return None
+    try:
+        import numpy as np
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes))
+        img = img.convert('RGB')
+        arr = np.array(img)
+        encodings = face_recognition.face_encodings(arr)
+        if not encodings:
+            return None
+        return encodings[0].tolist()
+    except Exception:
+        return None
+
+
+@app.route('/face/enroll', methods=['POST'])
+def face_enroll():
+    """
+    Accept a face image, compute its embedding, and store it for a student.
+    Body: multipart form "image" (file) and "student_id" (int) OR "rfid_id" (str).
+    Or JSON: "image_base64" (base64 string) and "student_id" or "rfid_id".
+    """
+    student_id = None
+    image_bytes = None
+
+    if request.content_type and 'multipart/form-data' in request.content_type:
+        student_id = request.form.get('student_id', type=int)
+        rfid_id = request.form.get('rfid_id') or request.form.get('rfid_tag')
+        f = request.files.get('image')
+        if f:
+            image_bytes = f.read()
+    else:
+        data = request.get_json() or {}
+        student_id = data.get('student_id')
+        rfid_id = data.get('rfid_id') or data.get('rfid_tag')
+        b64 = data.get('image_base64')
+        if b64:
+            try:
+                image_bytes = base64.b64decode(b64)
+            except Exception:
+                return jsonify({'error': 'Invalid image_base64'}), 400
+
+    if not image_bytes:
+        return jsonify({'error': 'Missing image (send multipart "image" or JSON "image_base64")'}), 400
+
+    if not FACE_RECOGNITION_AVAILABLE:
+        return jsonify({
+            'error': 'Face recognition not available',
+            'message': 'Install with: pip install face_recognition (requires dlib)'
+        }), 503
+
+    try:
+        if not student_id and rfid_id:
+            rfid_id = str(rfid_id).strip()
+            row = db.session.execute(text("""
+                SELECT student_id FROM students WHERE rfid_tag = :rfid_id
+            """), {'rfid_id': rfid_id}).fetchone()
+            if not row:
+                return jsonify({'error': 'RFID not found', 'rfid_id': rfid_id}), 404
+            student_id = row.student_id
+        if not student_id:
+            return jsonify({'error': 'Missing student_id or rfid_id'}), 400
+
+        embedding = _compute_face_embedding(image_bytes)
+        if not embedding:
+            return jsonify({
+                'error': 'No face detected in image',
+                'message': 'Ensure one clear face is visible in the photo'
+            }), 400
+
+        db.session.execute(text("""
+            UPDATE students SET face_embedding = :emb WHERE student_id = :sid
+        """), {'emb': json.dumps(embedding), 'sid': student_id})
+        db.session.commit()
+
+        return jsonify({
+            'student_id': student_id,
+            'message': 'Face embedding stored successfully',
+            'embedding_length': len(embedding)
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/face/verify', methods=['POST'])
 def face_verify():

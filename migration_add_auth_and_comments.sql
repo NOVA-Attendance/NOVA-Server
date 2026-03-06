@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS public.verification_codes (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Face embedding for Jetson face verification (optional: run add_face_embedding_column.py for SQLite)
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS face_embedding TEXT;
+
 -- Comments on attendance logs
 CREATE TABLE IF NOT EXISTS public.comments (
     comment_id SERIAL PRIMARY KEY,
