@@ -1,3 +1,4 @@
--- Add face_embedding column to students (for Jetson face verification)
--- Stores JSON array of floats (e.g. 128-d or 512-d embedding from face model)
+-- Purpose: Store face embeddings for Jetson face verification.
+-- Backend computes embedding (same model as NOVA/Jetson - DeepFace/Facenet512) and stores here;
+-- Jetson requests via GET /rfid/face-embedding and compares live camera to this.
 ALTER TABLE students ADD COLUMN IF NOT EXISTS face_embedding TEXT;

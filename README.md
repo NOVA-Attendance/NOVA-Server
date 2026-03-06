@@ -15,11 +15,13 @@ Backend API and database for [NOVA](https://github.com/NOVA-Attendance) (Next-ge
 # Optional: use SQLite for local dev (default is PostgreSQL)
 echo "DATABASE_URI=sqlite:///nova.db" >> .env
 
-# Add face_embedding column (once)
-python3 add_face_embedding_column.py
+# Add face_embedding column (PostgreSQL: run migration_add_face_embedding.sql; SQLite: ALTER TABLE students ADD COLUMN face_embedding TEXT; or run migration)
 
 # Seed students (with team RFID card IDs)
 python3 seed_database.py
+
+# Install deps (face embedding requires same model as Jetson - deepface)
+pip install flask flask-cors flask-sqlalchemy py-dotenv deepface
 
 # Start backend
 python3 app.py
@@ -35,7 +37,7 @@ Backend: **http://localhost:5001**
 |----------|--------|
 | `POST /rfid/scan` | Card tap → match student, mark attendance, return `face_embedding` if stored |
 | `GET /rfid/face-embedding?rfid_id=X` | Get stored face embedding for a card (Jetson face check) |
-| `POST /face/enroll` | Upload image → compute embedding, store for student (by `student_id` or `rfid_id`) |
+| `POST /face/enroll` | Upload image → compute embedding (DeepFace, same as [NOVA](https://github.com/NOVA-Attendance/NOVA)), store for student |
 | `GET /students`, `GET /attendance/recent` | Used by NOVA-UI |
 
-See **JETSON_RFID_INTEGRATION.md** for Jetson integration and **INTEGRATION.md** for schema/frontend mapping.
+Face embedding uses **DeepFace (Facenet512)** so it matches the Jetson/NOVA repo; coordinate with Faris if the model name changes.

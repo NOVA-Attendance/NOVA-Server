@@ -16,12 +16,16 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
 
-# Optional: for face embedding computation (pip install face_recognition)
+# Face embedding: required for /face/enroll. Must use same model as Jetson (NOVA repo - Faris).
+# NOVA uses DeepFace (e.g. Facenet512). Backend must use same model so embeddings are comparable.
 try:
-    import face_recognition
-    FACE_RECOGNITION_AVAILABLE = True
+    from deepface import DeepFace
+    FACE_EMBEDDING_AVAILABLE = True
+    FACE_EMBEDDING_MODEL = "Facenet512"  # Must match model used on Jetson (coordinate with Faris)
 except ImportError:
-    FACE_RECOGNITION_AVAILABLE = False
+    DeepFace = None
+    FACE_EMBEDDING_AVAILABLE = False
+    FACE_EMBEDDING_MODEL = None
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -993,8 +997,8 @@ def get_face_embedding_by_rfid():
 
 
 def _compute_face_embedding(image_bytes):
-    """Return 128-d embedding list or None. Requires face_recognition library."""
-    if not FACE_RECOGNITION_AVAILABLE:
+    """Return embedding list (same model as Jetson - NOVA repo). Requires deepface + same model as Faris."""
+    if not FACE_EMBEDDING_AVAILABLE or not DeepFace:
         return None
     try:
         import numpy as np
@@ -1002,10 +1006,13 @@ def _compute_face_embedding(image_bytes):
         img = Image.open(io.BytesIO(image_bytes))
         img = img.convert('RGB')
         arr = np.array(img)
-        encodings = face_recognition.face_encodings(arr)
-        if not encodings:
+        result = DeepFace.represent(arr, model_name=FACE_EMBEDDING_MODEL, enforce_detection=True)
+        if not result or not isinstance(result, list):
             return None
-        return encodings[0].tolist()
+        embedding = result[0].get('embedding') if result else None
+        if embedding is None:
+            return None
+        return embedding if isinstance(embedding, list) else embedding.tolist()
     except Exception:
         return None
 
@@ -1040,10 +1047,10 @@ def face_enroll():
     if not image_bytes:
         return jsonify({'error': 'Missing image (send multipart "image" or JSON "image_base64")'}), 400
 
-    if not FACE_RECOGNITION_AVAILABLE:
+    if not FACE_EMBEDDING_AVAILABLE:
         return jsonify({
-            'error': 'Face recognition not available',
-            'message': 'Install with: pip install face_recognition (requires dlib)'
+            'error': 'Face embedding not available',
+            'message': 'Install deepface (same as NOVA/Jetson): pip install deepface. Model must match Jetson - coordinate with Faris.'
         }), 503
 
     try:
