@@ -15,7 +15,8 @@ Backend API and database for [NOVA](https://github.com/NOVA-Attendance) (Next-ge
 # Optional: use SQLite for local dev (default is PostgreSQL)
 echo "DATABASE_URI=sqlite:///nova.db" >> .env
 
-# Add face_embedding column (PostgreSQL: run migration_add_face_embedding.sql; SQLite: ALTER TABLE students ADD COLUMN face_embedding TEXT; or run migration)
+# Create/update all required tables and columns used by app.py
+python3 create_tables.py
 
 # Seed students (with team RFID card IDs)
 python3 seed_database.py

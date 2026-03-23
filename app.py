@@ -16,16 +16,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
 
-# Face embedding: required for /face/enroll. Must use same model as Jetson (NOVA repo - Faris).
-# NOVA uses DeepFace (e.g. Facenet512). Backend must use same model so embeddings are comparable.
-try:
-    from deepface import DeepFace
-    FACE_EMBEDDING_AVAILABLE = True
-    FACE_EMBEDDING_MODEL = "Facenet512"  # Must match model used on Jetson (coordinate with Faris)
-except ImportError:
-    DeepFace = None
-    FACE_EMBEDDING_AVAILABLE = False
-    FACE_EMBEDDING_MODEL = None
+# Face embedding is required and must use the same model as Jetson (NOVA repo - Faris).
+from deepface import DeepFace
+FACE_EMBEDDING_MODEL = "Facenet512"  # Must match model used on Jetson (coordinate with Faris)
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -998,8 +991,6 @@ def get_face_embedding_by_rfid():
 
 def _compute_face_embedding(image_bytes):
     """Return embedding list (same model as Jetson - NOVA repo). Requires deepface + same model as Faris."""
-    if not FACE_EMBEDDING_AVAILABLE or not DeepFace:
-        return None
     try:
         import numpy as np
         from PIL import Image
@@ -1046,12 +1037,6 @@ def face_enroll():
 
     if not image_bytes:
         return jsonify({'error': 'Missing image (send multipart "image" or JSON "image_base64")'}), 400
-
-    if not FACE_EMBEDDING_AVAILABLE:
-        return jsonify({
-            'error': 'Face embedding not available',
-            'message': 'Install deepface (same as NOVA/Jetson): pip install deepface. Model must match Jetson - coordinate with Faris.'
-        }), 503
 
     try:
         if not student_id and rfid_id:
