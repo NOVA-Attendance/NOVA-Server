@@ -16,6 +16,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
 
+# DeepFace imports TF/Keras very early; on Windows/Python 3.10 importing TensorFlow first
+# avoids intermittent `ModuleNotFoundError: tensorflow.keras` during app import.
+import tensorflow as tf  # noqa: F401
+
 # Face embedding is required and must use the same model as Jetson (NOVA repo - Faris).
 from deepface import DeepFace
 FACE_EMBEDDING_MODEL = "Facenet512"  # Must match model used on Jetson (coordinate with Faris)
@@ -484,6 +488,8 @@ def get_all_students():
 def create_student():
     data = request.get_json()
     name = data.get('name')
+    student_number = data.get('student_number')
+    email = data.get('email')
     rfid_tag = data.get('rfid_tag') or generate_random_rfid()
     photo_path = data.get('photo_path')
 
@@ -492,10 +498,16 @@ def create_student():
 
     try:
         result = db.session.execute(text("""
-            INSERT INTO students (name, rfid_tag, photo_path)
-            VALUES (:name, :rfid_tag, :photo_path)
+            INSERT INTO students (name, student_number, email, rfid_tag, photo_path)
+            VALUES (:name, :student_number, :email, :rfid_tag, :photo_path)
             RETURNING student_id
-        """), {'name': name, 'rfid_tag': rfid_tag, 'photo_path': photo_path})
+        """), {
+            'name': name,
+            'student_number': student_number,
+            'email': email,
+            'rfid_tag': rfid_tag,
+            'photo_path': photo_path
+        })
         student_id = result.fetchone()[0]
         db.session.commit()
         return jsonify({'message': 'Student created successfully', 'student_id': student_id, 'rfid_tag': rfid_tag}), 201
@@ -540,6 +552,8 @@ def delete_student(student_id):
 def update_student(student_id):
     data = request.get_json()
     name = data.get('name')
+    student_number = data.get('student_number')
+    email = data.get('email')
     rfid_tag = data.get('rfid_tag')
     photo_path = data.get('photo_path')
 
@@ -549,6 +563,12 @@ def update_student(student_id):
     if name:
         updates.append("name = :name")
         params['name'] = name
+    if student_number:
+        updates.append("student_number = :student_number")
+        params['student_number'] = student_number
+    if email:
+        updates.append("email = :email")
+        params['email'] = email
     if rfid_tag:
         updates.append("rfid_tag = :rfid_tag")
         params['rfid_tag'] = rfid_tag
@@ -733,6 +753,85 @@ def log_attendance():
         """), {'student_id': student_id, 'class_id': class_id, 'method': method})
         db.session.commit()
         return jsonify({'message': 'Attendance recorded'}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/attendance/face-verify', methods=['POST'])
+def log_attendance_face_verify():
+    """
+    Jetson posts face verification outcome after it compares live face vs server embedding.
+
+    Expected JSON:
+      rfid_tag (str), student_id (int), class_id (int),
+      confidence (float 0..1), matched (bool), timestamp (ISO string, optional)
+
+    Optional:
+      image_base64 (base64 string) - captured face frame (JPG/PNG). If provided,
+      the backend will save it to instance/jetson_uploads for debugging/auditing.
+    """
+    data = request.get_json() or {}
+    student_id = data.get('student_id')
+    class_id = data.get('class_id')
+    matched = data.get('matched')
+    timestamp = data.get('timestamp')
+    image_b64 = data.get('image_base64')
+
+    if student_id is None or class_id is None or matched is None:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    # Store as an attendance log entry. "matched" -> Present, otherwise Absent.
+    status = 'Present' if bool(matched) else 'Absent'
+    method = 'FACE'
+
+    try:
+        saved_image_path = None
+        if image_b64:
+            try:
+                raw = base64.b64decode(image_b64)
+                from pathlib import Path
+                upload_dir = Path(app.instance_path) / "jetson_uploads"
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                ts = timestamp or datetime.now().isoformat().replace(":", "-")
+                saved_image_path = str(upload_dir / f"{student_id}_{ts}.jpg")
+                with open(saved_image_path, "wb") as f:
+                    f.write(raw)
+            except Exception:
+                # Don't fail attendance logging if image save fails
+                saved_image_path = None
+
+        # If a timestamp is provided, attempt to store it; otherwise DB default.
+        if timestamp:
+            db.session.execute(text("""
+                INSERT INTO attendance_logs (student_id, class_id, method, status, timestamp)
+                VALUES (:student_id, :class_id, :method, :status, :ts)
+            """), {
+                'student_id': student_id,
+                'class_id': class_id,
+                'method': method,
+                'status': status,
+                'ts': timestamp
+            })
+        else:
+            db.session.execute(text("""
+                INSERT INTO attendance_logs (student_id, class_id, method, status)
+                VALUES (:student_id, :class_id, :method, :status)
+            """), {
+                'student_id': student_id,
+                'class_id': class_id,
+                'method': method,
+                'status': status
+            })
+        db.session.commit()
+        return jsonify({
+            'message': 'Face verification recorded',
+            'student_id': student_id,
+            'class_id': class_id,
+            'matched': bool(matched),
+            'status': status,
+            'saved_image_path': saved_image_path
+        }), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -975,7 +1074,23 @@ def get_face_embedding_by_rfid():
         face_embedding = None
         if raw_emb:
             try:
-                face_embedding = json.loads(raw_emb) if isinstance(raw_emb, str) else raw_emb
+                if isinstance(raw_emb, str):
+                    s = raw_emb.strip()
+                    # Stored as JSON text (SQLite / TEXT column)
+                    if s.startswith("["):
+                        face_embedding = json.loads(s)
+                    # Stored as PostgreSQL array string e.g. "{0.1, -0.2, ...}"
+                    elif s.startswith("{") and s.endswith("}"):
+                        inner = s[1:-1].strip()
+                        if inner:
+                            face_embedding = [float(x) for x in inner.split(",")]
+                        else:
+                            face_embedding = []
+                    else:
+                        # Unknown string format; best-effort JSON parse
+                        face_embedding = json.loads(s)
+                else:
+                    face_embedding = raw_emb
             except Exception:
                 pass
 
@@ -997,13 +1112,40 @@ def _compute_face_embedding(image_bytes):
         img = Image.open(io.BytesIO(image_bytes))
         img = img.convert('RGB')
         arr = np.array(img)
-        result = DeepFace.represent(arr, model_name=FACE_EMBEDDING_MODEL, enforce_detection=True)
-        if not result or not isinstance(result, list):
-            return None
-        embedding = result[0].get('embedding') if result else None
-        if embedding is None:
-            return None
-        return embedding if isinstance(embedding, list) else embedding.tolist()
+        # Try several detectors: Jetson enrollment uses opencv; dim photos may need mtcnn/retinaface.
+        detectors = ("opencv", "mtcnn", "retinaface", "ssd")
+        last_err = None
+        for backend in detectors:
+            try:
+                result = DeepFace.represent(
+                    arr,
+                    model_name=FACE_EMBEDDING_MODEL,
+                    enforce_detection=True,
+                    detector_backend=backend,
+                )
+                if result and isinstance(result, list):
+                    embedding = result[0].get('embedding') if result else None
+                    if embedding is not None:
+                        return embedding if isinstance(embedding, list) else embedding.tolist()
+            except Exception as e:
+                last_err = e
+                continue
+        # Last resort: poor lighting / heavy occlusion — still Facenet512, but less trustworthy.
+        try:
+            result = DeepFace.represent(
+                arr,
+                model_name=FACE_EMBEDDING_MODEL,
+                enforce_detection=False,
+                detector_backend="opencv",
+            )
+            if result and isinstance(result, list):
+                embedding = result[0].get('embedding') if result else None
+                if embedding is not None:
+                    return embedding if isinstance(embedding, list) else embedding.tolist()
+        except Exception as e:
+            last_err = e
+        print(f"_compute_face_embedding failed: {last_err}")
+        return None
     except Exception:
         return None
 
@@ -1196,4 +1338,8 @@ def health_check():
 # Main entry point
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    # Flask's auto-reloader respawns the process ("Restarting with stat"). On some
+    # Windows + TensorFlow/DeepFace installs, the reloaded child process can fail
+    # importing `tensorflow.keras` even when the venv is correct. Disabling the
+    # reloader keeps the backend stable.
+    app.run(debug=True, host='0.0.0.0', port=5001, use_reloader=False)
